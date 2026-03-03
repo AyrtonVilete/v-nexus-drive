@@ -22,52 +22,48 @@ app.add_middleware(
 @app.post("/upload")
 async def upload_to_drive(file: UploadFile = File(...), folder_id: str = Form(...)):
     try:
-        # 1. Recupera o JSON do Bot da variável de ambiente do Render
         cred_json_str = os.getenv("GOOGLE_CREDENTIALS_JSON")
-        if not cred_json_str:
-            raise HTTPException(status_code=500, detail="Variável GOOGLE_CREDENTIALS_JSON não configurada.")
-
-        # 2. Autentica o Service Account
         cred_info = json.loads(cred_json_str)
         credentials = service_account.Credentials.from_service_account_info(
-            cred_info, scopes=['https://www.googleapis.com/auth/drive.file']
+            cred_info, scopes=['https://www.googleapis.com/auth/drive'] # Escopo full aqui
         )
-
-        # 3. Inicializa o serviço do Drive
         service = build('drive', 'v3', credentials=credentials)
 
-        # 4. Lê o arquivo enviado pelo Streamlit
         file_content = await file.read()
         file_stream = io.BytesIO(file_content)
-
-        # 5. Configura o upload
         media = MediaIoBaseUpload(file_stream, mimetype=file.content_type, resumable=True)
+        
         file_metadata = {
             'name': file.filename,
             'parents': [folder_id]
         }
 
-        # 6. Executa a criação no Drive
+        # 1. Cria o arquivo
         uploaded_file = service.files().create(
             body=file_metadata,
             media_body=media,
             fields='id'
         ).execute()
+        
+        file_id = uploaded_file.get("id")
 
-        return {"status": "success", "file_id": uploaded_file.get("id")}
+        # 2. MÁGICA: Transfere a propriedade para o seu e-mail pessoal
+        # Substitua 'seu-email@gmail.com' pelo seu e-mail dos 200GB
+        permission = {
+            'type': 'user',
+            'role': 'owner',
+            'emailAddress': 'seu-email@gmail.com' # <--- COLOQUE SEU EMAIL AQUI
+        }
+        
+        # O transferOwnership=True faz o arquivo "sair" da cota do bot e ir para a sua
+        service.permissions().create(
+            fileId=file_id,
+            body=permission,
+            transferOwnership=True,
+            fields='id'
+        ).execute()
+
+        return {"status": "success", "file_id": file_id}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/")
-def health_check():
-    return {"status": "Drive Bridge is Online! 🚀", "message": "Bem-vindo à API V-Nexus Drive Bridge"}
-
-
-@app.get("/health")
-def health_check_simple():
-    return {"status": "healthy"}
-
-
-# Registrar routers
-app.include_router(items.router, prefix="/api/v1")
